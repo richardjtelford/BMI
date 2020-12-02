@@ -3,7 +3,14 @@
 library("tidyverse")
 library("glue")
 library("conflicted")
-stopifnot(packageVersion("dplyr") >= "0.8.99.9003") # needs dplyr version 1.0 or development version from github 
+#fix conflicts
+conflict_prefer("filter", "dplyr")
+
+
+# needs dplyr version 1.0 or development version from github 
+stopifnot(packageVersion("dplyr") >= "0.8.99.9003") 
+# install with remotes::install_github("tidyverse/dplyr")
+
 
 # load functions
 source("R/functions.R")
@@ -56,13 +63,13 @@ raw <- read_delim(
 # clean data
 raw <- raw %>% 
   na.omit() %>%
-  mutate(n = 100) %>% # assume 100 patients - analysis is not sensitive to this
+  mutate(n = 100) %>% # assume 100 patients - needs fixing
   mutate(across(matches("height"), `/`, 100)) # height in m
 
 
 # naive estimate of BMI from mean mass and height
 naive <- raw %>% 
-  mutate(bmi = BMI(mass_mean, height_mean))
+  mutate(naive_bmi = BMI(mass_mean, height_mean))
 
 simulated_BMI <- raw %>% 
   select(-starts_with("bmi")) %>%
@@ -76,7 +83,28 @@ simulated_BMI %>%
   ggplot(aes(x = mean, y = sd)) +
   geom_point() +
   geom_point(data = raw, aes(x = bmi_mean, y = bmi_sd), colour = "red") +
-  geom_vline(aes(xintercept = round(bmi, 1)), naive, colour = "blue") +
+  geom_vline(aes(xintercept = round(naive_bmi, 1)), naive, colour = "blue") + #naive estimate
   facet_wrap(~ glue("Study {Study}  Arm {Arm}"), scales = "free_x")
 
-simulated_BMI 
+
+# calculate z scores
+z_scores <- simulated_BMI %>% 
+  group_by(Study, Arm) %>%
+  summarise(sd = sd(mean)) %>%
+  left_join(naive) %>%
+  mutate(z = (bmi_mean - naive_bmi) / sd) 
+
+z_scores %>%
+  filter(abs(z) < 5) %>% # filter away extreme values
+  ggplot(aes(x = z)) +
+  geom_histogram() 
+
+
+# probablity of co-incidence - will be sensitive to n  
+simulated_BMI %>% 
+  left_join(naive) %>% 
+  group_by(Study, Arm) %>%
+  summarise(prop = mean(round(mean, 1) == round(naive_bmi, 1))) %>%
+  ungroup()
+
+1 - pbinom(0:5, size = 11, prob = 0.15)
